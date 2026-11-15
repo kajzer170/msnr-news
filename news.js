@@ -270,8 +270,9 @@ const saveState = () => fs.writeFileSync(STATE_PATH, JSON.stringify(STATE, null,
     const already = STATE.digestDate === key;
     const hourNow = tzParts(now()).hour;
 
-    if (mode === "auto" && (already || hourNow !== DIGEST_HOUR)) {
-      if (!dry) console.log(`[digest] pominięty (${already ? "już wysłany" : "godzina " + hourNow})`);
+    // wysyłamy od 07:00 do końca dnia — jeśli GitHub spóźni robotę, digest i tak wyjdzie
+    if (mode === "auto" && (already || hourNow < DIGEST_HOUR)) {
+      if (!dry) console.log(`[digest] pominięty (${already ? "już wysłany" : "przed 0" + DIGEST_HOUR + ":00, jest " + hourNow + ":xx"})`);
     } else {
       const parts = splitMessage(text);
       if (dry) {
