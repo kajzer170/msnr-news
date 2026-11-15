@@ -1,0 +1,39 @@
+name: MSNR news
+
+on:
+  schedule:
+    - cron: "*/10 * * * *" # co 10 min (UTC); feed i tak jest cache'owany 1 h
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: msnr-news
+  cancel-in-progress: false
+
+jobs:
+  news:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Wyślij digest / alerty
+        env:
+          WEBHOOK_KALENDARZ: ${{ secrets.WEBHOOK_KALENDARZ }}
+          WEBHOOK_ALERTY: ${{ secrets.WEBHOOK_ALERTY }}
+        run: node news.js auto
+
+      - name: Zapisz stan (żeby nie dublować wiadomości)
+        run: |
+          git config user.name "msnr-news-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add state.json feed-cache.json 2>/dev/null || true
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: state $(date -u +%FT%TZ)"
+            git push
+          fi

@@ -1,0 +1,9 @@
+# sekrety i pliki tymczasowe
+config.json
+node_modules/
+log.txt
+*.log
+
+# cache kalendarza i stan są commitowane przez workflow (potrzebne do deduplikacji)
+# state.json
+# feed-cache.json
