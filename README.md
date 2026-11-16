@@ -1,94 +1,69 @@
-# MSNR News — automat kalendarza makro
+# MSNR News — automat NEWS (wydarzenia + alerty)
 
-Skrypt pobiera kalendarz makro i wysyła na Discorda:
+Skrypt obsługuje dwa osobne strumienie (dwa webhooki/kanały):
 
-| Kanał | Co wysyła | Kiedy |
-|---|---|---|
-| `📅・kalendarz-dnia` | wszystkie wydarzenia dnia (High + Medium), Medium zagęszczone | codziennie **07:00** czasu PL |
-| `🚨・news-alerty` | alert o publikacji **High Impact** | **30 min przed** publikacją |
+| Kanał (webhook) | Co wysyła | Kiedy | Czego nie ma |
+|---|---|---|---|
+| `📅・wydarzenia` (`WEBHOOK_KALENDARZ`) | kalendarz makro USA (High + Medium): digest dnia + alert **30 min przed** publikacją High Impact | digest codziennie **07:00** czasu PL (raz dziennie, do końca dnia) | nagłych newsów/nagłówków |
+| `🚨・alerty` (`WEBHOOK_ALERTY`) | **nagłe newsy/nagłówki** rynkowe wykryte w RSS (filtrowane słowami-kluczowymi) | w trakcie dnia (przy każdym przebiegu `auto`, cron co 10 min) | kalendarza dnia, zaplanowanych wydarzeń, alertów „30 min przed” |
 
-Zero zależności — wystarczy Node 18+.
+Zero zależności — wymaga Node 18+.
 
 ## Źródła danych
 
-1. **TradingView economic calendar** (główne) — stabilne, zawiera też odczyty `actual`
-   (przydatne, jeśli kiedyś dorobimy kanał „wyniki po publikacji").
-2. **Forex Factory mirror** (`nfs.faireconomy.media`) — zapas, gdy TradingView nie odpowie.
-   Uwaga: FF ma **agresywny rate limit** (`429` + `retry-after` do kilku minut), dlatego nie jest głównym źródłem.
+### Kalendarz makro (📅・wydarzenia)
+1. **TradingView economic calendar** (główne) — stabilne, zawiera też odczyty `actual`.
+2. **Forex Factory mirror** (`nfs.faireconomy.media`, best-effort) — uzupełnienie (np. mowy Fed, których TV czasem nie ma). FF ma agresywny rate limit, więc używamy osobnego cache (`ff-cache.json`, domyślnie 6 h) i traktujemy jako dodatek.
 
-Domyślnie tylko **USA** (`COUNTRIES=["US"]`). Można zmienić w `config.json` (`"countries": ["US","CA",...]`).
+Domyślnie tylko **USA** (`COUNTRIES=["US"]`). Można zmienić w `config.json`: `"countries": ["US","CA",...]`.
 Odrzucany szum: aukcje bonów, NOPA, „reserve assets" itp.
+
+### Nagłe newsy (🚨・alerty)
+- Źródła RSS (domyślnie): CNBC (US Top News, World) + MarketWatch (Realtime Headlines, Top Stories).
+- Filtr słów-kluczowych (opcja C), dopasowanie po tytule i opisie (wyrazy całe / frazy): `fed, fomc, powell, warsh, trump, white house, tariff, tariffs, cpi, pce, inflation, jobs, nfp, payrolls, unemployment, recession, gdp, retail sales, oil, yields, treasury, dollar, rate cut, rate hike, sanctions, shutdown, war`.
+- Deduplikacja (guid/link/tytuł) + pamięć w `state.json`; brane pod uwagę tylko świeże wpisy (domyślnie 6 h) i limit na przebieg (anty-spam).
+- Uwaga: posty z Truth Social nie mają stabilnego oficjalnego RSS — trafiają, gdy pojawią się jako nagłówek w źródłach RSS (zwykle z opóźnieniem). Zakładka „News” na Forex Factory nie jest automatyzowalna (Cloudflare).
 
 ## Pliki
 
 | Plik | Rola |
 |---|---|
-| `news.js` | cały automat |
-| `config.json` | webhooki — **lokalnie**, w repo nie trafia (`.gitignore`) |
-| `state.json` | pamięć: co już wysłane (żeby nie dublować) |
-| `feed-cache.json` | cache kalendarza (TTL 1 h) |
-| `.github/workflows/news.yml` | gotowy workflow GitHub Actions |
+| `news.js` | cały automat (kalendarz + nagłówki) |
+| `config.json` | webhooki/konfiguracja — **lokalnie**, w `.gitignore` (sekrety) |
+| `state.json` | stan: wysłany digest, alerty makro i wysłane nagłówki (deduplikacja) |
+| `feed-cache.json` | cache scalonego kalendarza (TV+FF) |
+| `ff-cache.json` | cache Forex Factory (best-effort, w `.gitignore`) |
+| `.github/workflows/news.yml` | GitHub Actions (cron co 10 min) |
 
-## Uruchamianie lokalne
+## Konfiguracja
 
-```bash
-node news.js auto                              # produkcja (digest 07:00 + alerty)
-node news.js digest --dry --date=2026-11-16    # podgląd digestu, bez wysyłki
-node news.js alerts --demo                     # przykładowy alert
-node news.js digest                            # wyślij digest teraz
+`config.json` (lokalnie, nie commitować):
+```json
+{
+  "webhookKalendarz": "https://discord.com/api/webhooks/... (📅・wydarzenia)",
+  "webhookAlerty": "https://discord.com/api/webhooks/... (🚨・alerty)"
+}
 ```
 
-## Wdrożenie: GitHub Actions (opcja B, 0 zł)
+Na GitHub Actions ustaw sekrety repo: `WEBHOOK_KALENDARZ`, `WEBHOOK_ALERTY` (mają pierwszeństwo przed plikiem). Można nadpisać: `countries`, `headlineFeeds`.
 
-### 1. Repozytorium
-
-- Na GitHubie utwórz repo, np. `msnr-news`.
-- **Ustaw je jako PUBLIC** — wtedy Actions ma nielimitowane minuty. W kodzie nie ma nic
-  wrażliwego (webhooki są w sekretach), a prywatne repo zużywałoby limit 2000 min/mies.
-- Prywatne też zadziała, ale wtedy zmień cron na `*/15 * * * *` (żeby zmieścić się w limicie).
-
-### 2. Wypchnij pliki
-
-W folderze `msnr-news`:
+## Uruchamianie
 
 ```bash
-git init
-git add .
-git commit -m "MSNR news bot"
-git branch -M main
-git remote add origin https://github.com/TWOJ-LOGIN/msnr-news.git
-git push -u origin main
+node news.js auto                          # produkcja: digest + alerty makro + nagłówki
+node news.js digest                        # wymuś digest teraz
+node news.js digest --dry --date=2026-11-16
+node news.js alerts                        # tylko alerty makro "30 min przed"
+node news.js alerts --demo                 # przykładowy alert makro (na sucho/--dry)
+node news.js headlines                     # tylko nagłe newsy
+node news.js headlines --dry               # podgląd wykrytych nagłówków (bez wysyłki)
 ```
+Flagi: `--dry` (bez wysyłki), `--fresh` (pomiń cache kalendarza).
 
-### 3. Sekrety
+## GitHub Actions
 
-Repo → **Settings → Secrets and variables → Actions → New repository secret**:
+Workflow `.github/workflows/news.yml` uruchamia `node news.js auto` co 10 minut i commituje `state.json`/`feed-cache.json` (deduplikacja i pamięć wysłanych pozycji). `ff-cache.json` nie jest commitowany.
 
-| Nazwa | Wartość |
-|---|---|
-| `WEBHOOK_KALENDARZ` | webhook kanału `📅・kalendarz-dnia` |
-| `WEBHOOK_ALERTY` | webhook kanału `🚨・news-alerty` |
-
-### 4. Pierwszy test
-
-Repo → **Actions → MSNR news → Run workflow**.
-Digest wyśle się tylko między 07:00–07:59 czasu PL (tak działa tryb `auto`);
-poza tą godziną zobaczysz w logu `[digest] pominięty (godzina X)` — to normalne.
-
-### 5. Uwagi
-
-- Cron GitHuba bywa spóźniony o 5–15 min (nie ma SLA). Dla kalendarza to bez znaczenia,
-  ale alert „30 min przed" może wyjść 15–25 min przed — okno alertu jest od `T-30` do `T+5`,
-  więc cron co 10 min zawsze trafi.
-- GitHub **wyłącza** harmonogram po 60 dniach bez aktywności w repo. Dlatego workflow
-  commituje `state.json` / `feed-cache.json` — to utrzymuje repo „żywym".
-
-## Alternatywy
-
-- **Twoja strona (cron + Node/PHP)** — jeśli hosting ma cron: `*/10 * * * * cd ~/msnr-news && node news.js auto >> log.txt 2>&1`. Tylko PHP? Daj znać, przepiszę.
-- **Domowy serwer/VPS** — ten sam cron.
-
-## Bezpieczeństwo
-
-Webhook = prawo pisania na kanał. Gdyby wyciekł: *Kanał → Integracje → Webhooks → Usuń*
-i wygeneruj nowy adres, potem podmiana sekretu w repo.
+```bash
+gh workflow run news.yml   # ręcznie
+```

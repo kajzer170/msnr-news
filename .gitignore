@@ -4,6 +4,7 @@ node_modules/
 log.txt
 *.log
 
-# cache kalendarza i stan są commitowane przez workflow (potrzebne do deduplikacji)
-# state.json
-# feed-cache.json
+# cache FF (osobny, best-effort) — nie commitujemy
+ff-cache.json
+
+# commitowane przez workflow (deduplikacja / cache): state.json, feed-cache.json
