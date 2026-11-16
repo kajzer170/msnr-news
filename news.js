@@ -21,7 +21,7 @@ const path = require("path");
 const TZ = "Europe/Warsaw";
 const DIGEST_HOUR = 7;
 const ALERT_LEAD_MIN = 30;
-const FOOTER = "-# MSNR Poland • dane: TradingView";
+const FOOTER = "-# MSNR Poland • kalendarz makro";
 
 
 const FLAG = {
@@ -45,7 +45,9 @@ const WEBHOOK_ALERTS = process.env.WEBHOOK_ALERTY || CONFIG.webhookAlerty;
 
 const STATE_PATH = path.join(__dirname, "state.json");
 const CACHE_PATH = path.join(__dirname, "feed-cache.json");
+const FF_CACHE_PATH = path.join(__dirname, "ff-cache.json");
 const CACHE_TTL_MIN = Number(process.env.CACHE_TTL_MIN || 60);
+const FF_CACHE_TTL_MIN = Number(process.env.FF_CACHE_TTL_MIN || 360); // FF ma ostry rate limit
 
 const STATE = fs.existsSync(STATE_PATH) ? JSON.parse(fs.readFileSync(STATE_PATH, "utf8")) : { digestDate: null, alerts: [] };
 
@@ -75,18 +77,18 @@ function num(v, unit) {
 }
 
 // ---- cache ------------------------------------------------------------------
-function readCache() {
-  if (!fs.existsSync(CACHE_PATH)) return null;
+function readCache(file = CACHE_PATH) {
+  if (!fs.existsSync(file)) return null;
   try {
-    const c = JSON.parse(fs.readFileSync(CACHE_PATH, "utf8"));
+    const c = JSON.parse(fs.readFileSync(file, "utf8"));
     return { ...c, events: c.events.map((e) => ({ ...e, date: new Date(e.date) })), ageMin: (Date.now() - c.at) / 60000 };
   } catch {
     return null;
   }
 }
 
-function writeCache(source, events) {
-  fs.writeFileSync(CACHE_PATH, JSON.stringify({ at: Date.now(), source, events }));
+function writeCache(file, source, events) {
+  fs.writeFileSync(file, JSON.stringify({ at: Date.now(), source, events }));
 }
 
 // ---- źródło 1: TradingView --------------------------------------------------
@@ -120,8 +122,8 @@ async function loadTradingView() {
     .sort((a, b) => a.date - b.date);
 }
 
-// ---- źródło 2: Forex Factory (zapas) ---------------------------------------
-async function loadForexFactory() {
+// ---- źródło 2: Forex Factory (uzupełnienie — ma mowy Fed, których TV często nie ma) ----
+async function fetchForexFactory() {
   const res = await fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json", {
     headers: { "User-Agent": "Mozilla/5.0 (MSNR-Poland-news-bot)" },
   });
@@ -130,7 +132,7 @@ async function loadForexFactory() {
   return raw
     .map((e) => ({
       title: String(e.title || "").replace(/\\\//g, "/").trim(),
-      country: e.country,
+      country: e.country === "USD" ? "US" : e.country,
       currency: e.country,
       date: new Date(e.date),
       impact: e.impact || "Low",
@@ -138,25 +140,78 @@ async function loadForexFactory() {
       previous: (e.previous || "").trim(),
       actual: "",
     }))
-    .filter((e) => !isNaN(e.date))
-    .sort((a, b) => a.date - b.date);
+    .filter((e) => !isNaN(e.date));
+}
+
+async function loadForexFactoryBestEffort(forceFresh) {
+  const cached = readCache(FF_CACHE_PATH);
+  if (!forceFresh && cached && cached.ageMin < FF_CACHE_TTL_MIN) return cached.events;
+  try {
+    const events = await fetchForexFactory();
+    writeCache(FF_CACHE_PATH, "ForexFactory", events);
+    console.log(`[feed] FF: ${events.length} zdarzeń`);
+    return events;
+  } catch (err) {
+    console.log(`[feed] FF nie działa (${err.message})${cached ? ` — cache ${Math.round(cached.ageMin)} min` : ""}`);
+    return cached ? cached.events : [];
+  }
+}
+
+function normTitle(t) {
+  return String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function mergeEvents(primary, secondary) {
+  const IMP = { Low: 0, Medium: 1, High: 2 };
+  const out = new Map();
+  const put = (e, prefer = false) => {
+    const key = `${e.date.toISOString().slice(0, 16)}|${e.country}|${normTitle(e.title)}`;
+    const cur = out.get(key);
+    if (!cur) return out.set(key, e);
+    // wybierz lepszy wpis: wyższy impact lub więcej danych
+    const score = (x) => (IMP[x.impact] || 0) * 10 + (x.forecast ? 1 : 0) + (x.previous ? 1 : 0) + (x.actual ? 1 : 0);
+    if (score(e) > score(cur) || (prefer && score(e) === score(cur))) out.set(key, e);
+  };
+  for (const e of primary) put(e, true);
+  for (const e of secondary) put(e, false);
+  return [...out.values()].sort((a, b) => a.date - b.date);
 }
 
 async function loadEvents(forceFresh) {
-  const cached = readCache();
+  const cached = readCache(CACHE_PATH);
   if (!forceFresh && cached && cached.ageMin < CACHE_TTL_MIN) {
     console.log(`[feed] cache ${cached.source} (${Math.round(cached.ageMin)} min)`);
     return cached.events;
   }
-  for (const [name, fn] of [["TradingView", loadTradingView], ["ForexFactory", loadForexFactory]]) {
-    try {
-      const events = await fn();
-      writeCache(name, events);
-      console.log(`[feed] pobrano ${name}: ${events.length} zdarzeń`);
-      return events;
-    } catch (err) {
-      console.log(`[feed] ${name} nie działa (${err.message})`);
-    }
+
+  let tv = null;
+  try {
+    tv = await loadTradingView();
+    console.log(`[feed] TradingView: ${tv.length} zdarzeń`);
+  } catch (err) {
+    console.log(`[feed] TradingView nie działa (${err.message})`);
+  }
+
+  // FF jako uzupełnienie (mowy Fed itp.), best-effort
+  const ff = await loadForexFactoryBestEffort(forceFresh);
+
+  let events = null;
+  let source = "merged";
+  if (tv && ff.length) {
+    events = mergeEvents(tv, ff);
+    source = "TradingView+ForexFactory";
+  } else if (tv) {
+    events = tv;
+    source = "TradingView";
+  } else if (ff.length) {
+    events = ff;
+    source = "ForexFactory";
+  }
+
+  if (events) {
+    writeCache(CACHE_PATH, source, events);
+    console.log(`[feed] łącznie: ${events.length} zdarzeń (${source})`);
+    return events;
   }
   if (cached) {
     console.log(`[feed] używam cache sprzed ${Math.round(cached.ageMin)} min`);
