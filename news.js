@@ -23,7 +23,7 @@ const DIGEST_HOUR = 7;
 const ALERT_LEAD_MIN = 30;
 const FOOTER = "-# MSNR Poland • dane: TradingView";
 
-const COUNTRIES = ["US", "CA", "GB", "EU", "JP", "AU", "NZ", "CH", "CN"];
+
 const FLAG = {
   USD: "🇺🇸", EUR: "🇪🇺", GBP: "🇬🇧", JPY: "🇯🇵", CAD: "🇨🇦",
   AUD: "🇦🇺", NZD: "🇳🇿", CHF: "🇨🇭", CNY: "🇨🇳",
@@ -34,6 +34,12 @@ const FLAG = {
 // ---- konfiguracja -----------------------------------------------------------
 const cfgPath = path.join(__dirname, "config.json");
 const CONFIG = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, "utf8")) : {};
+
+// kraje w kalendarzu (domyślnie tylko USA). Można nadpisać w config.json: "countries": ["US","CA"]
+const COUNTRIES = (Array.isArray(CONFIG.countries) && CONFIG.countries.length
+  ? CONFIG.countries
+  : (process.env.COUNTRIES || "US").split(",")
+).map((s) => String(s).trim().toUpperCase()).filter(Boolean);
 const WEBHOOK_CALENDAR = process.env.WEBHOOK_KALENDARZ || CONFIG.webhookKalendarz;
 const WEBHOOK_ALERTS = process.env.WEBHOOK_ALERTY || CONFIG.webhookAlerty;
 
@@ -211,16 +217,22 @@ function compactLines(list) {
 const NOISE = /auction|nopa|reserve assets|allotted at high|bid-to-cover|total accepted|soybean/i;
 
 // ---- digest ----------------------------------------------------------------
+function inScope(e) {
+  return COUNTRIES.includes(e.country) || COUNTRIES.includes(e.currency);
+}
+
 function buildDigest(events, forceKey) {
   const key = forceKey || fmtDateKey(now());
-  const todays = events.filter((e) => fmtDateKey(e.date) === key && !NOISE.test(e.title));
+  const todays = events.filter((e) => inScope(e) && fmtDateKey(e.date) === key && !NOISE.test(e.title));
   const high = todays.filter((e) => e.impact === "High");
   const medium = todays.filter((e) => e.impact === "Medium");
 
-  const lines = [`# 📅 KALENDARZ — ${fmtWeekday(todays.length ? todays[0].date : now())}`, ""];
+  const countryLabel = COUNTRIES.length === 1 && COUNTRIES[0] === "US" ? " (USA)" : COUNTRIES.length === 1 ? ` (${COUNTRIES[0]})` : "";
+  const lines = [`# 📅 KALENDARZ${countryLabel} — ${fmtWeekday(todays.length ? todays[0].date : now())}`, ""];
 
   if (!high.length && !medium.length) {
-    lines.push("## ☕ SPOKOJNY DZIEŃ", "", "> Brak istotnych publikacji makro (High / Medium).", "");
+    const scope = COUNTRIES.length === 1 && COUNTRIES[0] === "US" ? " w USA" : "";
+    lines.push("## ☕ SPOKOJNY DZIEŃ", "", `> Brak istotnych publikacji makro (High / Medium)${scope}.`, "");
   } else {
     if (high.length) lines.push("## 🔴 HIGH IMPACT", "", ...high.map(eventLine), "");
     if (medium.length) lines.push("## 🟡 MEDIUM", "", ...compactLines(medium), "");
@@ -234,7 +246,7 @@ function buildDigest(events, forceKey) {
 function dueAlerts(events) {
   const t = now().getTime();
   return events.filter((e) => {
-    if (e.impact !== "High") return false;
+    if (!inScope(e) || e.impact !== "High") return false;
     const key = `${e.date.toISOString()}|${e.country}|${e.title}`;
     if (STATE.alerts.includes(key)) return false;
     const lead = e.date.getTime() - ALERT_LEAD_MIN * 60000;

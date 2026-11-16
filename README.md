@@ -16,7 +16,7 @@ Zero zależności — wystarczy Node 18+.
 2. **Forex Factory mirror** (`nfs.faireconomy.media`) — zapas, gdy TradingView nie odpowie.
    Uwaga: FF ma **agresywny rate limit** (`429` + `retry-after` do kilku minut), dlatego nie jest głównym źródłem.
 
-Filtrowane kraje: USD, EUR, GBP, JPY, CAD, AUD, NZD, CHF, CNY.
+Domyślnie tylko **USA** (`COUNTRIES=["US"]`). Można zmienić w `config.json` (`"countries": ["US","CA",...]`).
 Odrzucany szum: aukcje bonów, NOPA, „reserve assets" itp.
 
 ## Pliki
