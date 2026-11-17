@@ -191,7 +191,7 @@ async function loadForexFactoryBestEffort(forceFresh) {
   }
 }
 
-function normTitle(t) { return String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
+function normTitle(t) { return String(t || "").toLowerCase().replace(/m\/m/g, "mom").replace(/q\/q/g, "qoq").replace(/y\/y/g, "yoy").replace(/[^a-z0-9]+/g, " ").trim(); }
 
 function mergeEvents(primary, secondary) {
   const IMP = { Low: 0, Medium: 1, High: 2 };
