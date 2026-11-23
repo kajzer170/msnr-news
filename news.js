@@ -55,6 +55,7 @@ const cmd = args.find((a) => !a.startsWith("--")) || "auto";
 const dry = args.includes("--dry") || args.includes("--demo");
 const fresh = args.includes("--fresh");
 const argDate = (args.find((a) => a.startsWith("--date=")) || "").slice(7);
+const force = args.includes("--force"); // wymuszenie wysyłki też w weekend (testy)
 
 const cfgPath = path.join(__dirname, "config.json");
 const CONFIG = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, "utf8")) : {};
@@ -444,7 +445,22 @@ async function runHeadlines(forceDry) {
 }
 
 // ---- orchestration ---------------------------------------------------------
+// w soboty i niedziele (czas PL) rynki są zamknięte — nie wysyłamy kalendarza ani alertów makro
+function isWeekend(d = now()) {
+  const day = inTZ(d).getDay(); // 0 = niedziela, 6 = sobota
+  return day === 0 || day === 6;
+}
+function skipWeekend(label, when = now()) {
+  if (isWeekend(when) && !force) {
+    console.log(`[${label}] weekend (PL) — pomijam kalendarz i alerty makro. Użyj --force, aby wymusić.`);
+    return true;
+  }
+  return false;
+}
+
 async function runDigest(forceKey) {
+  const when = forceKey ? new Date(`${forceKey}T12:00:00Z`) : now();
+  if (skipWeekend("digest", when)) return;
   const events = await loadEvents(fresh);
   const d = buildDigest(events, forceKey);
   for (let i = 0; i < d.parts.length; i++) {
@@ -456,6 +472,7 @@ async function runDigest(forceKey) {
 }
 
 async function runAlerts(demo) {
+  if (skipWeekend("alerts")) return;
   if (demo) {
     const sample = { title: "CPI m/m", country: "US", currency: "USD", date: new Date(Date.now() + 30 * 60000), impact: "High", forecast: "0.3%", previous: "0.4%" };
     await postDiscord(formatAlert(sample), "kalendarz");
@@ -492,7 +509,7 @@ async function runAlerts(demo) {
       await runAlerts(false);
       await runHeadlines(false);
     } else {
-      console.log("Użycie: node news.js [auto|digest|alerts|headlines] [--dry] [--fresh] [--date=YYYY-MM-DD]");
+      console.log("Użycie: node news.js [auto|digest|alerts|headlines] [--dry] [--fresh] [--force] [--date=YYYY-MM-DD]");
     }
   } catch (err) {
     console.error("Błąd:", err.message);

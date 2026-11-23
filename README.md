@@ -4,7 +4,7 @@ Skrypt obsługuje dwa osobne strumienie (dwa webhooki/kanały):
 
 | Kanał (webhook) | Co wysyła | Kiedy | Czego nie ma |
 |---|---|---|---|
-| `📅・wydarzenia` (`WEBHOOK_KALENDARZ`) | kalendarz makro USA (High + Medium): digest dnia + alert **30 min przed** publikacją High Impact | digest codziennie **07:00** czasu PL (raz dziennie, do końca dnia) | nagłych newsów/nagłówków |
+| `📅・wydarzenia` (`WEBHOOK_KALENDARZ`) | kalendarz makro USA (High + Medium): digest dnia + alert **30 min przed** publikacją High Impact | digest codziennie **07:00** czasu PL (raz dziennie, do końca dnia), **tylko w dni robocze** | nagłych newsów/nagłówków |
 | `🚨・alerty` (`WEBHOOK_ALERTY`) | **nagłe newsy/nagłówki** rynkowe wykryte w RSS (filtrowane słowami-kluczowymi) | w trakcie dnia (przy każdym przebiegu `auto`, cron co 10 min) | kalendarza dnia, zaplanowanych wydarzeń, alertów „30 min przed” |
 
 Zero zależności — wymaga Node 18+.
@@ -58,7 +58,9 @@ node news.js alerts --demo                 # przykładowy alert makro (na sucho/
 node news.js headlines                     # tylko nagłe newsy
 node news.js headlines --dry               # podgląd wykrytych nagłówków (bez wysyłki)
 ```
-Flagi: `--dry` (bez wysyłki), `--fresh` (pomiń cache kalendarza).
+**Weekendy:** w soboty i niedziele (czas PL) digest i alerty makro są pomijane (rynki zamknięte). Nagłówki RSS nadal działają. Aby wymusić wysyłkę w weekend, użyj `--force`.
+
+Flagi: `--dry` (bez wysyłki), `--fresh` (pomiń cache kalendarza), `--force` (wymuś wysyłkę w weekend).
 
 ## GitHub Actions
 
